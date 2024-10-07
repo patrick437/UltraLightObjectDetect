@@ -2,17 +2,23 @@ import cv2
 import torch
 from ultralytics import YOLO
 import time
+from picamera2 import Picamera2
 
 # Initialize YOLOv8 model
-model = YOLO("yolov8n.pt")  # or use the specific model you've downloaded
+model = YOLO("yolov8n.pt")  # Load YOLOv8 model
 
-# Initialize webcam
-cap = cv2.VideoCapture(0)
+# Initialize Picamera2
+camera = Picamera2()
+camera_config = camera.create_still_configuration(main={"size": (640, 480)})  # You can configure the resolution
+camera.configure(camera_config)
+camera.start()
 
-# Get the video properties for saving
-frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = int(cap.get(cv2.CAP_PROP_FPS))
+time.sleep(2)  # Give the camera time to warm up
+
+# Get camera properties (from config or manually set them)
+frame_width = 640
+frame_height = 480
+fps = 30  # This can be estimated based on PiCamera2 settings or manually adjusted
 
 # Initialize video writer
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -22,11 +28,12 @@ out = cv2.VideoWriter('output.mp4', fourcc, fps, (frame_width, frame_height))
 prev_time = 0
 fps_list = []
 
-while cap.isOpened():
-    # Read a frame from the webcam
-    success, frame = cap.read()
+# Capture loop
+while True:
+    # Capture a frame from the PiCamera2
+    frame = camera.capture_array()
 
-    if success:
+    if frame is not None:
         # Run YOLOv8 inference on the frame
         results = model(frame)
 
@@ -54,7 +61,6 @@ while cap.isOpened():
         break
 
 # Release the video capture object and close the display window
-cap.release()
 out.release()
 cv2.destroyAllWindows()
 
