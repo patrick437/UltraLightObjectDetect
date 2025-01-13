@@ -23,76 +23,92 @@ GPIO.setup(BUSY_PIN, GPIO.IN)
 GPIO.setup(DIO1_PIN, GPIO.IN)
 GPIO.setup(NSS_PIN, GPIO.OUT)
 GPIO.setup(DIO4_PIN, GPIO.OUT)
+
+# Initial pin states
+GPIO.output(RESET_PIN, GPIO.HIGH)
 GPIO.output(NSS_PIN, GPIO.HIGH)
-GPIO.output(DIO4_PIN, GPIO.HIGH)  # Enable transmit
+GPIO.output(DIO4_PIN, GPIO.LOW)  # Start with transmit disabled
 
 print("Initializing SPI...")
 spi = spidev.SpiDev()
 spi.open(0, 0)
-spi.max_speed_hz = 5000000  # 5 MHz
+spi.max_speed_hz = 1000000  # Reduced to 1 MHz for testing
 spi.mode = 0
+spi.bits_per_word = 8
+spi.lsbfirst = False
 
 def reset_device():
-    print("Resetting device...")
+    print("Starting thorough reset sequence...")
+    GPIO.output(NSS_PIN, GPIO.HIGH)
     GPIO.output(RESET_PIN, GPIO.LOW)
-    time.sleep(0.1)
+    time.sleep(0.2)  # Longer reset pulse
     GPIO.output(RESET_PIN, GPIO.HIGH)
-    time.sleep(0.1)
-    print("Reset complete")
+    time.sleep(0.2)  # Longer wait after reset
+    print(f"BUSY pin state immediately after reset: {GPIO.input(BUSY_PIN)}")
 
 def wait_on_busy():
-    print("Waiting for device to be ready...")
-    print(f"Initial BUSY pin state: {GPIO.input(BUSY_PIN)}")
-    timeout = 100
-    count = 0
-    while GPIO.input(BUSY_PIN):
+    print(f"Checking BUSY pin state: {GPIO.input(BUSY_PIN)}")
+    retry_count = 0
+    while GPIO.input(BUSY_PIN) and retry_count < 50:
         time.sleep(0.1)
-        count += 1
-        if count % 10 == 0:
-            print(f"Still waiting... BUSY pin state: {GPIO.input(BUSY_PIN)}")
-        if count >= timeout:
-            print("ERROR: Device busy timeout!")
-            return False
-    print("Device ready")
+        retry_count += 1
+        if retry_count % 10 == 0:
+            print(f"BUSY pin still high after {retry_count/10} seconds")
+    
+    if GPIO.input(BUSY_PIN):
+        print("ERROR: Device stuck in busy state")
+        return False
     return True
 
 def write_command(command, data=None):
+    if not wait_on_busy():
+        return False
+        
     try:
-        print(f"Writing command: 0x{command:02X}")
+        print(f"Attempting to write command: 0x{command:02X}")
         GPIO.output(NSS_PIN, GPIO.LOW)
         time.sleep(0.001)
-        spi.xfer([command])
+        resp = spi.xfer([command])
+        print(f"Command write response: {resp}")
+        
         if data:
-            print(f"Writing data: {[hex(x) for x in data]}")
-            spi.xfer(data)
+            time.sleep(0.001)
+            resp = spi.xfer(data)
+            print(f"Data write response: {resp}")
+        
         time.sleep(0.001)
         GPIO.output(NSS_PIN, GPIO.HIGH)
-        return wait_on_busy()
+        time.sleep(0.001)
+        
+        return True
     except Exception as e:
-        print(f"Error writing command: {e}")
+        print(f"Error during SPI transfer: {e}")
         return False
 
 try:
-    print("Starting SX1262 test program...")
-    print("\nTesting BUSY pin state...")
-    print(f"Current BUSY pin state: {GPIO.input(BUSY_PIN)}")
+    print("\nStarting SX1262 test sequence...")
+    print(f"Initial BUSY pin state: {GPIO.input(BUSY_PIN)}")
+    print(f"Initial DIO1 pin state: {GPIO.input(DIO1_PIN)}")
     
+    # Full reset sequence
     reset_device()
-    time.sleep(1)
     
-    print(f"BUSY pin state after reset: {GPIO.input(BUSY_PIN)}")
-    
-    if write_command(0x80, [0x00]):  # Simple standby command
-        print("Initial command successful!")
+    # Try reading chip version (GetStatus command)
+    print("\nAttempting to read device status...")
+    if write_command(0xC0):  # GetStatus command
+        print("Status command sent successfully")
     else:
-        print("Initial command failed!")
+        print("Failed to send status command")
 
 except KeyboardInterrupt:
     print("\nProgram stopped by user")
 except Exception as e:
     print(f"\nUnexpected error: {e}")
 finally:
-    print("Cleaning up...")
+    print("\nCleaning up...")
+    GPIO.output(NSS_PIN, GPIO.HIGH)
+    GPIO.output(RESET_PIN, GPIO.HIGH)
+    GPIO.output(DIO4_PIN, GPIO.LOW)
     spi.close()
     GPIO.cleanup()
     print("Cleanup complete")
